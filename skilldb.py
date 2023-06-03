@@ -90,7 +90,7 @@ def skill_selection_prompt(job: dict, candidate_skills: list):
         + "The first task describes the overall job. "
         + "Each successive task describes a technique we have chosen to follow "
         + "and our results so far. "
-        + "The last task is our most recent task.\n\n"
+        + "The last task is our most recent technique.\n\n"
     )
 
     result += job_prompt("", job) + "\n\n"
@@ -116,8 +116,8 @@ def skill_selection_prompt(job: dict, candidate_skills: list):
     return result
 
 
-def color_prompt(c: int, t: str):
-    return f"\033[{c}m\033[1m{t}\033[0m\033[0m"
+def color_prompt(color: int, text: str):
+    return f"\033[{color}m\033[1m{text}\033[0m\033[0m"
 
 
 # This Tool can be used in a Chain using find_skills(),
@@ -135,6 +135,14 @@ class SkillStore(BaseTool):
         vectorstore = Chroma()
         docstore = []
         return cls(vectorstore=vectorstore, docstore=docstore)
+
+    @classmethod
+    def create_example(cls, **kwargs):
+        """Construct an example skill database with 4 example skills."""
+        result = SkillStore.create()
+        for skill in example_skills():
+            result.add_skill(skill)
+        return result
 
     def add_skill(self, skill: dict):
         """Insert one new skills into the vectorstore."""
@@ -232,7 +240,7 @@ Below is a JSON5 schema for the "Skill" and "Job" records:
     }
     instruction: {
       type: "natural language",
-      description: "the instructions to the tool, such as a prompt-template for an LLM"
+      description: "the instructions to the tool, such as a prompt for an LLM"
     }
     domain: {
       type: "natural language",
@@ -301,21 +309,8 @@ def test_poem():
     print(reply)
 
 
-def test_vlog():
-    """Sets up a skill database with 4 skills, and a problem context with one overall
-    task and one previous skill-driven task.  Calls SkillFinderChain.run.
-    The Claude LLM answers by sugesting the "filter by user interests" technique.
-    (and explains his fine choice.)
-    """
-    current_job_skill = {
-        "instruction": (
-            "The user creates vlog videos for publication on youtube. "
-            "Our job is to select several possible topics for her next video."
-        ),
-        "domain": "",
-        "score": "",
-    }
-
+def example_skills():
+    """A few example skills to test the SkillStore and the SkillFinder."""
     related_topics_skill = {
         "instruction": ("Please select about 20 topics related to the topics below."),
         "domain": "selecting topics for creative works",
@@ -345,6 +340,30 @@ def test_vlog():
         "domain": "exact analytical solutions of nonlinear partial differential equation.",
         "score": "this technique has been tried 0 times.",
     }
+    return [
+        related_topics_skill,
+        personal_topics_skill,
+        timely_topics_skill,
+        math_skill,
+    ]
+
+
+def test_vlog():
+    """Sets up a skill database with 4 skills, and a problem context with one overall
+    task and one previous skill-driven task.  Calls SkillFinderChain.run.
+    The Claude LLM answers by sugesting the "filter by user interests" technique.
+    (and explains his fine choice.)
+    """
+    current_job_skill = {
+        "instruction": (
+            "The user creates vlog videos for publication on youtube. "
+            "Our job is to select several possible topics for her next video."
+        ),
+        "domain": "",
+        "score": "",
+    }
+
+    known_skills = example_skills()
 
     current_job_task = {
         "skill": current_job_skill,
@@ -353,12 +372,12 @@ def test_vlog():
     }
 
     related_topics_task = {
-        "skill": related_topics_skill,
+        "skill": known_skills[0],
         "parameters": [
             {
                 "name": "the existing topics",
                 "value": (
-                    """ "my new BMW the good and the bad","""
+                    """ "my new BMW - the good and the bad","""
                     + """ "hairstyles of the rich and famous","""
                     + """ "a cat's life"."""
                 ),
@@ -374,11 +393,15 @@ def test_vlog():
                     + """ "no fault auto insurance","""
                     + """ "hair style disasters","""
                     + """ "car styles of the next century","""
-                    + """ "hair styles for cats","""
+                    + """ "these cats are dressed in style","""
                     + """ "when a cat meets a lion","""
                     + """ "what's wrong with volkwagen","""
                     + """ "why not to be famous","""
-                    + """ "the cat in the hat is canceled again"."""
+                    + """ "the cat in the hat is canceled again","""
+                    + """ "does a BMW cost more in maintanence?","""
+                    + """ "glamour in a post-pandemic world","""
+                    + """ "how much should you be investung in your hair?","""
+                    + """ "all the cats cast in Keanu"."""
                 ),
             }
         ],
@@ -392,11 +415,8 @@ def test_vlog():
     }
 
     skilldb = SkillStore.create()
-    skilldb.add_skill(related_topics_skill)
-    skilldb.add_skill(personal_topics_skill)
-    skilldb.add_skill(timely_topics_skill)
-    skilldb.add_skill(math_skill)
-
+    for skill in known_skills:
+        skilldb.add_skill(skill)
     llm = ChatAnthropic()
     chain = SkillFinderChain.create(skilldb=skilldb, llm=llm)
     reply = chain.run({"job": current_job})
