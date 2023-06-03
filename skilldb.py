@@ -1,7 +1,7 @@
-
 import json
 
 from typing import Dict, List, Tuple, Optional, Any, Union, Type
+from numbers import Number
 from pydantic import BaseModel, Field
 
 from langchain.prompts.chat import (
@@ -11,11 +11,7 @@ from langchain.prompts.chat import (
     HumanMessagePromptTemplate,
 )
 
-from langchain.schema import (
-    AIMessage,
-    HumanMessage,
-    SystemMessage
-)
+from langchain.schema import AIMessage, HumanMessage, SystemMessage
 
 from langchain.callbacks.manager import (
     AsyncCallbackManagerForChainRun,
@@ -37,97 +33,95 @@ from langchain.vectorstores import Chroma
 from langchain.chat_models import ChatAnthropic
 
 
-# TODO: switch this to like: "1.2. Skill instruction:"
-# TODO: The "following / above" scheme is not very readable.
-# TODO: accept a "numbering" input variable.
-def entry_prompt():
+def section_prompt(section: str, sub: int):
+    """Formats a subsection number."""
+    return f"{section}{sub}."
+
+
+def entry_prompt(section: str, name: str, value: str):
     """Presents one named item."""
-    return PromptTemplate(
-        input_variables=["name", "value"],
-        template=("The following is {name}:\n"
-	    "{value}\n"
-            "Above is {name}.\n"
-        )
-    )
+    space = (section) and " " or ""
+    return f"{section}{space}{name}:\n\n{value}\n\n"
 
-def constant_prompt(prompt: str):
-    return PromptTemplate(template = prompt, input_variables = [])
 
-def task_prompt(task: dict):
+def task_prompt(section: str, task: dict):
     """Presents one task as an instruction."""
-    return FewShotPromptTemplate(
-        input_variables=[],
-        example_prompt = entry_prompt(),
-        prefix = task["skill"]["instruction"],
-        examples = task["parameters"] + task["results"],
-        suffix = "",
+    result = task["skill"]["instruction"] + "\n\n"
+    i = 1
+    for p in task["parameters"] + task["results"]:
+        result += entry_prompt(section_prompt(section, i), p["name"], p["value"])
+        i += 1
+    return result
+
+
+def task_entry_prompt(section: str, task_name: str, task: dict):
+    """Describes one task as problem context."""
+    return entry_prompt(
+        section=section, name=task_name, value=task_prompt(section, task)
     )
 
-def task_entry_prompt(task_name: str, task: dict):
-    """Describes one task for problem context."""
-    result = entry_prompt().format(
-        name = task_name,
-        value = task_prompt(task).format()
-    )
-    return constant_prompt(result)
 
-def job_prompt(job: dict):
+def job_prompt(section: str, job: dict):
     """Describes the whole problem context."""
-    first_task = job["tasks"][0]
-    middle_tasks = job["tasks"][1:-1]
-    last_task = job["tasks"][-1]
     result = ""
-    result += task_entry_prompt(
-        "the overall job description", first_task).format()
-    for i in range(len(middle_tasks)):
-        result += task_entry_prompt(
-            "previous task #" + i, middle_tasks[i]).format()
-    result += task_entry_prompt(
-        "the current task description", last_task).format()
-    return constant_prompt(result)
+    i = 1
+    for task in job["tasks"]:
+        name = (i == 1) and "the overall job description" or "a previous task"
+        result += task_entry_prompt(section_prompt(section, i), name, task)
+        i += 1
+    return result
 
-def skill_prompt(skill: dict):
+
+def skill_prompt(section: str, skill: dict):
     """Describes one documented skill."""
     result = ""
-    result += entry_prompt().format(
-        name = "instructions to perform a skill",
-        value = skill["instruction"])
-    result += entry_prompt().format(
-        name = "suggested applications of a skill",
-        value = skill["domain"])
-    result += entry_prompt().format(
-        name = "observed performance of a skill",
-        value = skill["score"])
-    return constant_prompt(result)
+    result += entry_prompt(section, "technique instructions", skill["instruction"])
+    result += entry_prompt("", "suggested uses", skill["domain"])
+    result += entry_prompt("", "observed performance", skill["score"])
+    return result
+
 
 # TODO: move these prompt contents into format_prompt().
 def skill_selection_prompt(job: dict, candidate_skills: list):
     result = ""
-    result += ("We are working together on the job described below. " +
-        "Our progress so far is described by the list of tasks below. " +
-        "The first task describes the overall job. " +
-        "Each successive tasks describes a technique we have chosen to follow " +
-        "and the results achieved so far by following that technique."
-        "The last task is the technique we have chosen most recently.\n\n")
+    result += (
+        "We are working together on the job described below. "
+        + "Our progress so far is described by the list of tasks below. "
+        + "The first task describes the overall job. "
+        + "Each successive task describes a technique we have chosen to follow "
+        + "and our results so far. "
+        + "The last task is our most recent task.\n\n"
+    )
 
-    result += job_prompt(job) + "\n\n"
+    result += job_prompt("", job) + "\n\n"
 
-    result += ("Now let's choose another technique technique try. " +
-        "To help guide us, we have a list of techniques that have been tried " +
-        "before for similar jobs.  We can choose one of those techniques " +
-        "or suggest a completely new technique to try.\n")
-    result += ("Below is our list of known techniques.  Each technique includes " +
-        "the instructions for how to perform it, and a summary of our previous " +
-        "experience with it.\n\n")
+    result += (
+        "Now let's choose another technique technique to try. "
+        + "To help guide us, we have a list of techniques that have been tried "
+        + "before on similar jobs.  We can choose one of those techniques "
+        + "or suggest a completely new technique to try.\n\n"
+    )
+    result += (
+        "Below is our list of known techniques.  Each technique includes "
+        + "the instructions for how to perform it, and a summary of our previous "
+        + "experience with it.\n\n"
+    )
 
+    i = 1
     for skill in candidate_skills:
-        result += skill_prompt(skill)
+        result += skill_prompt(section_prompt("", i), skill)
+        i += 1
 
-    result += ("That's all. " + 
-        "Please tell me what technique we should try next.")
-    return constant_prompt(result)
+    result += "That's all. " + "Please indicate what technique we should try next.\n\n"
+    return result
 
-# This tool can be used in Chains as well as Agents.
+
+def color_prompt(c: int, t: str):
+    return f"\033[{c}m\033[1m{t}\033[0m\033[0m"
+
+
+# This Tool can be used in a Chain using find_skills(),
+# or in an Agent using __call__().
 class SkillStore(BaseTool):
     name = "SkillStore"
     description = "vector store for LLM skills"
@@ -140,32 +134,28 @@ class SkillStore(BaseTool):
         """Construct an empty skill database."""
         vectorstore = Chroma()
         docstore = []
-        return cls(
-            vectorstore = vectorstore,
-            docstore = docstore)
+        return cls(vectorstore=vectorstore, docstore=docstore)
 
     def add_skill(self, skill: dict):
         """Insert one new skills into the vectorstore."""
         self.docstore.append(skill)
-        docid = len(self.docstore) - 1;
-        skill_doc = skill_prompt(skill).format()
-        self.vectorstore.add_texts(
-            texts=[skill_doc],
-            metadatas=[{"id": docid}])
+        docid = len(self.docstore) - 1
+        skill_doc = skill_prompt("", skill)
+        self.vectorstore.add_texts(texts=[skill_doc], metadatas=[{"id": docid}])
 
     def find_skills(self, job: dict):
         """Lookup candidate skills in the vectorstore."""
-	    # compose a query string from fields of solver_context.
+        # compose a query string from fields of solver_context.
         # focus on the most immediate task.
         task = job["tasks"][-1]
-        query = task_prompt(task).format()
+        query = task_prompt("", task)
         docs = self.vectorstore.similarity_search_with_score(query, k=4)
         result = []
         for doc in docs:
-            print("doc[0]: " + str(doc[0]))
             docid = doc[0].metadata["id"]
-            result.append((self.docstore[docid], doc[1]))
-        return result            
+            skill = self.docstore[docid]
+            result.append(self.docstore[docid])
+        return result
 
     def _run(
         self,
@@ -187,15 +177,12 @@ class SkillStore(BaseTool):
 
 
 class SkillFinderChain(Chain):
-
-    llm: BaseLLM
-    skilldb: SkillStore
+    llm: Any  # BaseLLM = Field(init=False)
+    skilldb: SkillStore = Field(init=False)
 
     @classmethod
     def create(cls, skilldb: SkillStore, llm: BaseLLM) -> Chain:
-        return cls(
-            llm = llm,
-            skilldb = skilldb)
+        return cls(llm=llm, skilldb=skilldb)
 
     @property
     def input_keys(self) -> List[str]:
@@ -205,7 +192,7 @@ class SkillFinderChain(Chain):
     @property
     def output_keys(self) -> List[str]:
         """Acepts the whole problem context."""
-        return []
+        return ["selected_skill"]
 
     def _call(
         self,
@@ -217,38 +204,206 @@ class SkillFinderChain(Chain):
 
         job = inputs["job"]
         skills = self.skilldb.find_skills(job)
-        prompt = skill_selection_prompt(job, skills)
-        prompt_value = prompt.format_prompt(**inputs)
-        response = self.llm.generate_prompt(
-            [prompt_value],
-            callbacks=run_manager.get_child() if run_manager else None
+        prompt_str = skill_selection_prompt(job, skills)
+        prompt_value = PromptTemplate(
+            template=prompt_str, input_variables=[]
+        ).format_prompt()
+        print(color_prompt(92, "hhh: skill_finder_prompt:"))
+        print(prompt_value.to_string())
+        llm_result = self.llm.generate_prompt(
+            [prompt_value], callbacks=run_manager.get_child() if run_manager else None
         )
-        return {
-            "selected_skill": response,
-        }
+        reply = ""
+        for g in llm_result.generations[0]:
+            reply += g.text
+        return {"selected_skill": reply}
         # TODO: find the selected skill in the list of skills.
 
-skilldb = SkillStore.create()
-fake_skill = {
-    "instruction": "write a poem",
-    "domain": "poetry",
-    "score": "none",
+
+"""
+Below is a JSON5 schema for the "Skill" and "Job" records:
+
+{
+  $id: "Skill",
+  properties: {
+    tool: {
+      type: "string",
+      description: "the tool to invoke, such as an LLM"
+    }
+    instruction: {
+      type: "natural language",
+      description: "the instructions to the tool, such as a prompt-template for an LLM"
+    }
+    domain: {
+      type: "natural language",
+      description: "suggested problem domains for the skill"
+    }
+    score: {
+      type: "natural language",
+      description: "observed past performance of the skill, including run counts"
+    }
 }
-fake_task = {
-    "skill": fake_skill,
-    "parameters": [],
-    "results": [],
+
+{
+  $id: "Entry"
+  properties: {
+    name: {type: "string"},
+    value: {type: "string"}
+  }
 }
 
-fake_job = {
-    "tasks": [
-        fake_task,
-    ]
+{
+  $id: "Task",
+  properties: {
+    skill: {$ref: "Skill"},
+    parameters: {type: "array" items: {$ref: "Entry"}},
+    results: {type: "array" items: {$ref: "Entry"}}
 }
-skilldb.add_skill(fake_skill)
 
-llm = ChatAnthropic()
+{
+  $id: "Job"
+  properties: {
+    tasks: {type: "array" items: {$ref: "Task"}}
+  }
+}
+"""
 
-chain = SkillFinderChain.create(skilldb = skilldb, llm = llm)
 
-chain.run({})
+def test_poem():
+    """Just excercises SkillStore.add_skill and SkillFinderChain.run
+    The Claude LLM answers with a technique for writng a poem, starting with a concrete theme.
+    """
+    skilldb = SkillStore.create()
+    fake_skill = {
+        "instruction": "write a poem",
+        "domain": "poetry",
+        "score": "none",
+    }
+    skilldb.add_skill(fake_skill)
+
+    fake_task = {
+        "skill": fake_skill,
+        "parameters": [],
+        "results": [],
+    }
+
+    fake_job = {
+        "tasks": [
+            fake_task,
+        ]
+    }
+
+    llm = ChatAnthropic()
+    chain = SkillFinderChain.create(skilldb=skilldb, llm=llm)
+    reply = chain.run({"job": fake_job})
+
+    print(color_prompt(95, "hhh: skill_finder_reply:"))
+    print(reply)
+
+
+def test_vlog():
+    """Sets up a skill database with 4 skills, and a problem context with one overall
+    task and one previous skill-driven task.  Calls SkillFinderChain.run.
+    The Claude LLM answers by sugesting the "filter by user interests" technique.
+    (and explains his fine choice.)
+    """
+    current_job_skill = {
+        "instruction": (
+            "The user creates vlog videos for publication on youtube. "
+            "Our job is to select several possible topics for her next video."
+        ),
+        "domain": "",
+        "score": "",
+    }
+
+    related_topics_skill = {
+        "instruction": ("Please select about 20 topics related to the topics below."),
+        "domain": "selecting topics for creative works",
+        "score": "this technique has been tried 151 times, and helped 21 times",
+    }
+
+    personal_topics_skill = {
+        "instruction": (
+            "Please filter the list of topics below according to the users interests. "
+            + "Some of the users main interests are also listed below."
+        ),
+        "domain": "selecting topics for creative works",
+        "score": "this technique has been tried 43 times, and helped 2 times",
+    }
+
+    timely_topics_skill = {
+        "instruction": (
+            "Please filter the list of topics below according to recent public engagement. "
+            + "consider using a search engine to ascertain the level of public engagement in each. "
+        ),
+        "domain": "selecting topics for creative works",
+        "score": "this technique has been tried 4 times, and helped 0 times",
+    }
+
+    math_skill = {
+        "instruction": ("""Try symmetry reductions."""),
+        "domain": "exact analytical solutions of nonlinear partial differential equation.",
+        "score": "this technique has been tried 0 times.",
+    }
+
+    current_job_task = {
+        "skill": current_job_skill,
+        "parameters": [],
+        "results": [],
+    }
+
+    related_topics_task = {
+        "skill": related_topics_skill,
+        "parameters": [
+            {
+                "name": "the existing topics",
+                "value": (
+                    """ "my new BMW the good and the bad","""
+                    + """ "hairstyles of the rich and famous","""
+                    + """ "a cat's life"."""
+                ),
+            }
+        ],
+        "results": [
+            {
+                "name": "the related topics",
+                "value": (
+                    """ "known defects with Tesla autiopilot","""
+                    + """ "EV's everywhere except America","""
+                    + """ "Biden's infrastructure package and US highways","""
+                    + """ "no fault auto insurance","""
+                    + """ "hair style disasters","""
+                    + """ "car styles of the next century","""
+                    + """ "hair styles for cats","""
+                    + """ "when a cat meets a lion","""
+                    + """ "what's wrong with volkwagen","""
+                    + """ "why not to be famous","""
+                    + """ "the cat in the hat is canceled again"."""
+                ),
+            }
+        ],
+    }
+
+    current_job = {
+        "tasks": [
+            current_job_task,
+            related_topics_task,
+        ]
+    }
+
+    skilldb = SkillStore.create()
+    skilldb.add_skill(related_topics_skill)
+    skilldb.add_skill(personal_topics_skill)
+    skilldb.add_skill(timely_topics_skill)
+    skilldb.add_skill(math_skill)
+
+    llm = ChatAnthropic()
+    chain = SkillFinderChain.create(skilldb=skilldb, llm=llm)
+    reply = chain.run({"job": current_job})
+
+    print(color_prompt(95, "hhh: skill_finder_reply:"))
+    print(reply)
+
+
+# test_poem()
+test_vlog()
