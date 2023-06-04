@@ -348,31 +348,10 @@ def example_skills():
     ]
 
 
-def test_vlog():
-    """Sets up a skill database with 4 skills, and a problem context with one overall
-    task and one previous skill-driven task.  Calls SkillFinderChain.run.
-    The Claude LLM answers by sugesting the "filter by user interests" technique.
-    (and explains his fine choice.)
-    """
-    current_job_skill = {
-        "instruction": (
-            "The user creates vlog videos for publication on youtube. "
-            "Our job is to select several possible topics for her next video."
-        ),
-        "domain": "",
-        "score": "",
-    }
-
-    known_skills = example_skills()
-
-    current_job_task = {
-        "skill": current_job_skill,
-        "parameters": [],
-        "results": [],
-    }
-
+def example_tasks():
+    related_topics_skill = example_skills()[0]
     related_topics_task = {
-        "skill": known_skills[0],
+        "skill": related_topics_skill,
         "parameters": [
             {
                 "name": "the existing topics",
@@ -406,12 +385,35 @@ def test_vlog():
             }
         ],
     }
+    return [related_topics_task]
+
+
+def test_vlog():
+    """Sets up a skill database with 4 skills, and a problem context with one overall
+    task and one previous skill-driven task.  Calls SkillFinderChain.run.
+    The Claude LLM answers by sugesting the "filter by user interests" technique.
+    (and explains his fine choice.)
+    """
+    current_job_skill = {
+        "instruction": (
+            "The user creates vlog videos for publication on youtube. "
+            "Our job is to select several possible topics for her next video."
+        ),
+        "domain": "",
+        "score": "",
+    }
+
+    current_job_task = {
+        "skill": current_job_skill,
+        "parameters": [],
+        "results": [],
+    }
+
+    known_skills = example_skills()
+    known_tasks = [current_job_task] + example_tasks()
 
     current_job = {
-        "tasks": [
-            current_job_task,
-            related_topics_task,
-        ]
+        "tasks": known_tasks,
     }
 
     skilldb = SkillStore.create()
@@ -425,5 +427,86 @@ def test_vlog():
     print(reply)
 
 
+class SkilledAgent(BaseSingleActionAgent):
+    """A fake custom Agent invoking the SkillFinderChain."""
+
+    skilldb: SkillStore = Field(init=False)
+
+    @property
+    def input_keys(self):
+        return ["input"]
+
+    def plan(
+        self, intermediate_steps: List[Tuple[AgentAction, str]], **kwargs: Any
+    ) -> Union[AgentAction, AgentFinish]:
+        """Given input, decided what to do.
+
+        Args:
+            intermediate_steps: Steps the LLM has taken to date,
+                along with observations
+            **kwargs: User inputs.
+
+        Returns:
+            Action specifying what tool to use.
+        """
+        print(color_prompt(95, "hhh: SkilledAgent..."))
+        current_job = json.loads(kwargs["input"])
+        print(json.dumps(current_job, indent=2))
+
+        llm = ChatAnthropic()
+        chain = SkillFinderChain.create(skilldb=self.skilldb, llm=llm)
+        reply = chain.run({"job": current_job})
+        print(color_prompt(95, "hhh: skill_finder_reply:"))
+        print(reply)
+
+        # return AgentAction(tool="SkillStore", tool_input=kwargs["input"], log="")
+        return AgentFinish({"output": reply}, "")
+
+    async def aplan(
+        self, intermediate_steps: List[Tuple[AgentAction, str]], **kwargs: Any
+    ) -> Union[AgentAction, AgentFinish]:
+        raise NotImplementedError
+
+
+def test_agent():
+    """Runs SkillFinderChain through an ZeroShotAgent."""
+
+    current_job_skill = {
+        "instruction": (
+            "The user creates vlog videos for publication on youtube. "
+            "Our job is to select several possible topics for her next video."
+        ),
+        "domain": "",
+        "score": "",
+    }
+
+    current_job_task = {
+        "skill": current_job_skill,
+        "parameters": [],
+        "results": [],
+    }
+
+    known_skills = example_skills()
+    known_tasks = [current_job_task] + example_tasks()
+
+    current_job = {
+        "tasks": known_tasks,
+    }
+
+    skilldb = SkillStore.create()
+    for skill in known_skills:
+        skilldb.add_skill(skill)
+
+    print(color_prompt(95, "hhh: agent_executor.run..."))
+
+    tools = [skilldb]
+    agent = SkilledAgent(skilldb=skilldb)
+    agent_executor = AgentExecutor.from_agent_and_tools(
+        agent=agent, tools=tools, verbose=True
+    )
+    agent_executor.run({"input": json.dumps(current_job)})
+
+
 # test_poem()
-test_vlog()
+# test_vlog()
+test_agent()
